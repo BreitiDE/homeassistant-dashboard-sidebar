@@ -18,6 +18,7 @@ The full configuration read from the Lovelace `dashboard_sidebar` key.
 | `on_desktop` | `'sidebar' \| 'hidden'` | no | What renders on wide (desktop) viewports. Default sidebar. |
 | `on_mobile` | `'sidebar' \| 'bar' \| 'hidden'` | no | What renders on narrow (mobile) viewports: the sidebar, the mobile bar, or nothing. Defaults to bar when a `mobile` section exists, else sidebar. |
 | `breakpoint` | `number` | no | Viewport width in pixels at and below which "mobile" applies (the bar, on_mobile, on_desktop). Default 768. |
+| `users` | `string[]` | no | Home Assistant users the sidebar is shown to, by user id or display name (case-insensitive). Omit to show it to everyone. Users not listed see the dashboard without the sidebar, except while editing the dashboard, so an admin can always reach the editor. A display filter, not access control. |
 | `background` | `string` | no | Sidebar background: any CSS `background` value (color, gradient, image, …), applied as the `background` shorthand. Defaults to the theme card background. |
 | `header` | `SidebarBlock[]` | no | Blocks pinned to the top, above the scrolling body. |
 | `body` | `SidebarBlock[]` | no | Blocks in the scrolling region below the header. |

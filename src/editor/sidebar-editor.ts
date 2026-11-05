@@ -242,6 +242,12 @@ export class DashboardSidebarEditor extends LitElement {
   /** Per-field validation errors, keyed by field name within the current form. */
   @state() private _fieldErrors: Record<string, string> = {};
 
+  /**
+   * The instance's real (non-system) users for the Visible To picker, or null
+   * until loaded / when the list is unavailable (non-admin or older HA).
+   */
+  @state() private _users: { id: string; name: string }[] | null = null;
+
   /** Whether the unsaved-changes exit confirmation is showing. */
   @state() private _confirmingClose = false;
 
@@ -454,6 +460,105 @@ export class DashboardSidebarEditor extends LitElement {
       void customElements.whenDefined('ha-yaml-editor').then(() => this.requestUpdate());
     }
     this._loadServiceTranslations();
+    this._loadUsers();
+  }
+
+  /**
+   * Loads the user list for the Visible To picker. `config/auth/list` is
+   * admin-only, which matches who can edit a dashboard; system users (the
+   * Supervisor, integrations) are left out since nobody signs in as them.
+   */
+  private _loadUsers(): void {
+    const callWS = (this.hass as unknown as { callWS?: (msg: object) => Promise<unknown> })?.callWS;
+    if (typeof callWS !== 'function') {
+      return;
+    }
+    void Promise.resolve(callWS.call(this.hass, { type: 'config/auth/list' }))
+      .then((list) => {
+        if (!Array.isArray(list)) {
+          return;
+        }
+        this._users = (list as { id?: string; name?: string; system_generated?: boolean }[])
+          .filter((u) => u && typeof u.id === 'string' && !u.system_generated)
+          .map((u) => ({ id: u.id as string, name: u.name || (u.id as string) }))
+          .sort((a, b) => a.name.localeCompare(b.name));
+      })
+      .catch(() => {
+        // No user list (not an admin): the restriction stays editable as YAML.
+      });
+  }
+
+  /**
+   * Whether a configured `users` entry refers to the given user, by id or
+   * display name, matching the runtime check.
+   */
+  private static _entryMatches(entry: string, user: { id: string; name: string }): boolean {
+    const e = entry.trim().toLowerCase();
+    return e === user.id.toLowerCase() || e === user.name.trim().toLowerCase();
+  }
+
+  /**
+   * Toggles one user in the `users` list. Ticking stores the stable user id;
+   * unticking drops every entry naming that user (id or name). An empty list
+   * removes the key, which shows the sidebar to everyone again.
+   */
+  private _toggleUser(user: { id: string; name: string }, on: boolean): void {
+    const current = (this._working.users ?? []).filter(
+      (entry) => !DashboardSidebarEditor._entryMatches(entry, user),
+    );
+    if (on) {
+      current.push(user.id);
+    }
+    this._patchConfig({ users: current.length ? current : undefined });
+  }
+
+  /**
+   * Renders the Visible To picker: one checkbox per user. Entries that match
+   * no known user (a typo, or a deleted user) are listed so they can be
+   * removed rather than silently kept.
+   */
+  private _renderUsersField(): TemplateResult {
+    const configured = this._working.users ?? [];
+    const users = this._users;
+    if (!users) {
+      return html`<div class="field">
+        <span>Visible To</span>
+        <small class="field-desc">
+          ${configured.length ? `Restricted to: ${configured.join(', ')}.` : 'All users.'} The user
+          list could not be loaded; edit the users key in YAML.
+        </small>
+      </div>`;
+    }
+    const unknown = configured.filter(
+      (entry) => !users.some((u) => DashboardSidebarEditor._entryMatches(entry, u)),
+    );
+    return html`<div class="field">
+      <span>Visible To</span>
+      <small class="field-desc">
+        Tick the users who see this sidebar. Leave all unticked to show it to everyone. While
+        editing the dashboard it is always shown.
+      </small>
+      ${users.map((u) =>
+        checkboxField(
+          u.name,
+          configured.some((entry) => DashboardSidebarEditor._entryMatches(entry, u)),
+          (v) => this._toggleUser(u, v),
+        ),
+      )}
+      ${unknown.map((entry) =>
+        checkboxField(
+          entry,
+          true,
+          () =>
+            this._patchConfig({
+              users: configured.filter((e) => e !== entry).length
+                ? configured.filter((e) => e !== entry)
+                : undefined,
+            }),
+          'No user with this id or name exists. Untick to remove it.',
+        ),
+      )}
+    </div>`;
   }
 
   /**
@@ -1553,6 +1658,7 @@ export class DashboardSidebarEditor extends LitElement {
                     (v) => this._patchConfig({ overlay: v || undefined }),
                     'Float the sidebar over the dashboard instead of pushing the content aside.',
                   )}
+                  ${this._renderUsersField()}
                   <details class="advanced">
                     <summary>Advanced</summary>
                     ${intField(

@@ -21,6 +21,22 @@ describe('validateConfig', () => {
     );
   });
 
+  it('accepts a users list of ids or names', () => {
+    expect(validateConfig({ ...valid(), users: ['a1b2c3', 'Stefan'] })).toHaveLength(0);
+  });
+
+  it('rejects malformed users', () => {
+    expect(validateConfig({ ...valid(), users: 'Stefan' as unknown as string[] })).toContain(
+      'users: must be a list of user ids or names',
+    );
+    expect(validateConfig({ ...valid(), users: [] })).toContain(
+      'users: an empty list hides the sidebar from everyone; remove the key instead',
+    );
+    expect(validateConfig({ ...valid(), users: ['ok', ' '] })).toContain(
+      'users[1]: must be a non-empty user id or name',
+    );
+  });
+
   it('rejects a non-mapping config', () => {
     expect(validateConfig(null as unknown as DashboardSidebarConfig)).toEqual([
       'dashboard_sidebar: config must be a mapping',

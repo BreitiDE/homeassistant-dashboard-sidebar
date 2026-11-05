@@ -833,6 +833,67 @@ describe('<dashboard-sidebar-editor>', () => {
     expect(closed).to.equal(true);
   });
 
+  it('restricts the sidebar to ticked users and drops the key when none are', async () => {
+    const hass = {
+      states: {},
+      services: {},
+      callWS: async (msg: { type: string }) =>
+        msg.type === 'config/auth/list'
+          ? [
+              { id: 'u-stefan', name: 'Stefan' },
+              { id: 'u-gast', name: 'Gast' },
+              { id: 'u-sup', name: 'Supervisor', system_generated: true },
+            ]
+          : [],
+    };
+    const el = await fixture<DashboardSidebarEditor>(
+      html`<dashboard-sidebar-editor .hass=${hass as never}></dashboard-sidebar-editor>`,
+    );
+    el.config = { ...cfg(), users: ['gast', 'Old User'] };
+    let saved: DashboardSidebarConfig | undefined;
+    el.onSave = (c) => {
+      saved = c;
+    };
+    await settle(el);
+    await new Promise((r) => setTimeout(r, 0));
+    await settle(el);
+
+    const boxes = (): HTMLLabelElement[] =>
+      [...root(el).querySelectorAll('.settings label.field-inline')].filter((l) =>
+        ['Stefan', 'Gast', 'Old User', 'Supervisor'].includes(
+          l.querySelector('.check-label > span')?.textContent?.trim() ?? '',
+        ),
+      ) as HTMLLabelElement[];
+    const box = (name: string): HTMLInputElement =>
+      boxes()
+        .find((l) => l.querySelector('.check-label > span')?.textContent?.trim() === name)!
+        .querySelector('input') as HTMLInputElement;
+
+    // System users are hidden; a name entry matches its user; an unknown entry is listed.
+    expect(boxes().map((l) => l.querySelector('.check-label > span')?.textContent?.trim())).to.eql([
+      'Gast',
+      'Stefan',
+      'Old User',
+    ]);
+    expect(box('Gast').checked).to.equal(true);
+    expect(box('Stefan').checked).to.equal(false);
+
+    box('Stefan').click();
+    await settle(el);
+    box('Old User').click();
+    await settle(el);
+    (root(el).querySelector('footer .primary') as HTMLButtonElement).click();
+    expect(saved?.users).to.eql(['gast', 'u-stefan']);
+
+    box('Gast').click();
+    await settle(el);
+    box('Stefan').click();
+    await settle(el);
+    (root(el).querySelector('footer .primary') as HTMLButtonElement).click();
+    expect(saved?.users).to.equal(undefined);
+    expect(JSON.parse(JSON.stringify(saved))).not.to.have.property('users');
+  });
+
   it('surfaces errors and does not save an invalid config', async () => {
     const el = await mount({} as DashboardSidebarConfig);
     let saved = false;

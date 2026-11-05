@@ -461,6 +461,19 @@ export const validateConfig = (config: DashboardSidebarConfig): string[] => {
   ) {
     errors.push('breakpoint: must be a positive number of pixels');
   }
+  if (config.users !== undefined) {
+    if (!Array.isArray(config.users)) {
+      errors.push('users: must be a list of user ids or names');
+    } else if (config.users.length === 0) {
+      errors.push('users: an empty list hides the sidebar from everyone; remove the key instead');
+    } else {
+      config.users.forEach((u, i) => {
+        if (typeof u !== 'string' || u.trim() === '') {
+          errors.push(`users[${i}]: must be a non-empty user id or name`);
+        }
+      });
+    }
+  }
   if (c.hide_on_mobile !== undefined) {
     errors.push('hide_on_mobile: replaced by `on_mobile: hidden`');
   }

@@ -348,6 +348,13 @@ export interface DashboardSidebarConfig {
    */
   breakpoint?: number;
   /**
+   * Home Assistant users the sidebar is shown to, by user id or display name
+   * (case-insensitive). Omit to show it to everyone. Users not listed see the
+   * dashboard without the sidebar, except while editing the dashboard, so an
+   * admin can always reach the editor. A display filter, not access control.
+   */
+  users?: string[];
+  /**
    * Sidebar background: any CSS `background` value (color, gradient, image, …),
    * applied as the `background` shorthand. Defaults to the theme card background.
    */

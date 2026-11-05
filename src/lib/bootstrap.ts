@@ -6,6 +6,7 @@ import {
   TOGGLE_EVENT,
 } from './const';
 import { desktopMode, mobileMode } from './mobile';
+import { isVisibleForUser } from './users';
 import type { DashboardSidebarConfig } from './types';
 import type { DashboardSidebar } from '../dashboard-sidebar';
 import type { DashboardSidebarBar } from '../dashboard-sidebar-bar';
@@ -150,6 +151,23 @@ const readConfig = (huiRoot: { lovelace?: any }): DashboardSidebarConfig | null 
 };
 
 /**
+ * Reads the config only when the sidebar should render for the signed-in
+ * user, or null when it is absent or restricted to other users. Edit mode
+ * always shows it, so an admin who is not on the list can still open the
+ * editor (only admins can enter edit mode).
+ */
+const readVisibleConfig = (huiRoot: { lovelace?: any }): DashboardSidebarConfig | null => {
+  const config = readConfig(huiRoot);
+  if (!config) {
+    return null;
+  }
+  if (isEditMode(huiRoot) || isVisibleForUser(config, getHass()?.user)) {
+    return config;
+  }
+  return null;
+};
+
+/**
  * Writes an edited config back to the Lovelace config.
  */
 const saveConfig = (huiRoot: { lovelace?: any }, config: DashboardSidebarConfig): void => {
@@ -287,7 +305,7 @@ const buildSidebar = (): void => {
   if (!huiRoot) {
     return;
   }
-  const config = readConfig(huiRoot);
+  const config = readVisibleConfig(huiRoot);
   const shadow = huiRoot.shadowRoot;
 
   if (!config) {
@@ -425,7 +443,9 @@ const ensureSidebar = (): void => {
     }
     const shadow = huiRoot.shadowRoot;
     const editMode = isEditMode(huiRoot);
-    const config = readConfig(huiRoot);
+    // A sidebar restricted to other users reads as no sidebar here, so the
+    // reconcile below tears it down (and never shows the add button for it).
+    const config = readVisibleConfig(huiRoot);
     const wrapper = shadow.getElementById(WRAPPER_ID);
 
     if (!wrapper) {

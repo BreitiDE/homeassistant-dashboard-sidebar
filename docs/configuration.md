@@ -62,11 +62,46 @@ the [Config Reference](reference.md) (generated from the source, always current)
 | `on_desktop` | `sidebar` \| `hidden` | `sidebar` | What renders on wide (desktop) viewports. |
 | `on_mobile` | `sidebar` \| `bar` \| `hidden` | `sidebar` | What renders on narrow (mobile) viewports. Defaults to `bar` when a `mobile` section exists. |
 | `breakpoint` | number (px) | `768` | Viewport width at and below which "mobile" applies. |
+| `users` | list of strings | all users | Home Assistant users who see the sidebar, by user id or display name. See [Per-user visibility](#per-user-visibility). |
 | `background` | CSS `background` | theme card bg | Any CSS background, including gradients. |
 | `header` | list | - | Blocks pinned to the top. |
 | `body` | list | - | Blocks in the scrolling region. |
 | `footer` | mapping | - | The bottom bar (see [Footer](footer.md)). |
 | `card_mod` | mapping | - | card-mod styling for the whole sidebar (see [Styling](styling.md)). |
+
+## Per-user visibility
+
+By default every user who opens the dashboard sees the sidebar. List users
+under `users` to show it only to them; everyone else gets the plain
+dashboard. Entries match a user's **id** or **display name**
+(case-insensitive), so readable names work in YAML:
+
+```yaml
+dashboard_sidebar:
+  users:
+    - Stefan
+    - 3f2a9c0e8b1d4e6fa7c5b2d1e0f9a8b7   # a user id, as the editor stores it
+  body:
+    - type: item
+      title: Home
+      icon: mdi:home
+      tap_action:
+        action: navigate
+        navigation_path: /lovelace/home
+```
+
+In the visual editor, **Settings → Visible To** lists the instance's users as
+checkboxes and stores their ids, which survive a user being renamed. Leaving
+every box unticked removes the key and shows the sidebar to everyone.
+
+While the dashboard is in edit mode the sidebar is always shown, so an admin
+who is not on the list can still open the editor.
+
+!!! note
+    This hides the sidebar; it does not secure anything. The configuration is
+    part of the dashboard every user loads, so do not rely on it to keep
+    controls away from a user. Use Home Assistant's own user permissions or a
+    separate dashboard for that.
 
 ## Push or overlay
 

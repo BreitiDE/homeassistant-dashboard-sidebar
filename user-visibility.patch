@@ -1,0 +1,520 @@
+diff --git a/docs/configuration.md b/docs/configuration.md
+index 5a5c47d..f1a98d8 100644
+--- a/docs/configuration.md
++++ b/docs/configuration.md
+@@ -62,12 +62,47 @@ the [Config Reference](reference.md) (generated from the source, always current)
+ | `on_desktop` | `sidebar` \| `hidden` | `sidebar` | What renders on wide (desktop) viewports. |
+ | `on_mobile` | `sidebar` \| `bar` \| `hidden` | `sidebar` | What renders on narrow (mobile) viewports. Defaults to `bar` when a `mobile` section exists. |
+ | `breakpoint` | number (px) | `768` | Viewport width at and below which "mobile" applies. |
++| `users` | list of strings | all users | Home Assistant users who see the sidebar, by user id or display name. See [Per-user visibility](#per-user-visibility). |
+ | `background` | CSS `background` | theme card bg | Any CSS background, including gradients. |
+ | `header` | list | - | Blocks pinned to the top. |
+ | `body` | list | - | Blocks in the scrolling region. |
+ | `footer` | mapping | - | The bottom bar (see [Footer](footer.md)). |
+ | `card_mod` | mapping | - | card-mod styling for the whole sidebar (see [Styling](styling.md)). |
+ 
++## Per-user visibility
++
++By default every user who opens the dashboard sees the sidebar. List users
++under `users` to show it only to them; everyone else gets the plain
++dashboard. Entries match a user's **id** or **display name**
++(case-insensitive), so readable names work in YAML:
++
++```yaml
++dashboard_sidebar:
++  users:
++    - Stefan
++    - 3f2a9c0e8b1d4e6fa7c5b2d1e0f9a8b7   # a user id, as the editor stores it
++  body:
++    - type: item
++      title: Home
++      icon: mdi:home
++      tap_action:
++        action: navigate
++        navigation_path: /lovelace/home
++```
++
++In the visual editor, **Settings → Visible To** lists the instance's users as
++checkboxes and stores their ids, which survive a user being renamed. Leaving
++every box unticked removes the key and shows the sidebar to everyone.
++
++While the dashboard is in edit mode the sidebar is always shown, so an admin
++who is not on the list can still open the editor.
++
++!!! note
++    This hides the sidebar; it does not secure anything. The configuration is
++    part of the dashboard every user loads, so do not rely on it to keep
++    controls away from a user. Use Home Assistant's own user permissions or a
++    separate dashboard for that.
++
+ ## Push or overlay
+ 
+ By default the sidebar **pushes**: the dashboard view sits beside it and narrows
+diff --git a/docs/reference.md b/docs/reference.md
+index b24b84b..2ef6ee4 100644
+--- a/docs/reference.md
++++ b/docs/reference.md
+@@ -18,6 +18,7 @@ The full configuration read from the Lovelace `dashboard_sidebar` key.
+ | `on_desktop` | `'sidebar' \| 'hidden'` | no | What renders on wide (desktop) viewports. Default sidebar. |
+ | `on_mobile` | `'sidebar' \| 'bar' \| 'hidden'` | no | What renders on narrow (mobile) viewports: the sidebar, the mobile bar, or nothing. Defaults to bar when a `mobile` section exists, else sidebar. |
+ | `breakpoint` | `number` | no | Viewport width in pixels at and below which "mobile" applies (the bar, on_mobile, on_desktop). Default 768. |
++| `users` | `string[]` | no | Home Assistant users the sidebar is shown to, by user id or display name (case-insensitive). Omit to show it to everyone. Users not listed see the dashboard without the sidebar, except while editing the dashboard, so an admin can always reach the editor. A display filter, not access control. |
+ | `background` | `string` | no | Sidebar background: any CSS `background` value (color, gradient, image, …), applied as the `background` shorthand. Defaults to the theme card background. |
+ | `header` | `SidebarBlock[]` | no | Blocks pinned to the top, above the scrolling body. |
+ | `body` | `SidebarBlock[]` | no | Blocks in the scrolling region below the header. |
+diff --git a/src/editor/sidebar-editor.browser.test.ts b/src/editor/sidebar-editor.browser.test.ts
+index ea273a6..35b494e 100644
+--- a/src/editor/sidebar-editor.browser.test.ts
++++ b/src/editor/sidebar-editor.browser.test.ts
+@@ -833,6 +833,67 @@ describe('<dashboard-sidebar-editor>', () => {
+     expect(closed).to.equal(true);
+   });
+ 
++  it('restricts the sidebar to ticked users and drops the key when none are', async () => {
++    const hass = {
++      states: {},
++      services: {},
++      callWS: async (msg: { type: string }) =>
++        msg.type === 'config/auth/list'
++          ? [
++              { id: 'u-stefan', name: 'Stefan' },
++              { id: 'u-gast', name: 'Gast' },
++              { id: 'u-sup', name: 'Supervisor', system_generated: true },
++            ]
++          : [],
++    };
++    const el = await fixture<DashboardSidebarEditor>(
++      html`<dashboard-sidebar-editor .hass=${hass as never}></dashboard-sidebar-editor>`,
++    );
++    el.config = { ...cfg(), users: ['gast', 'Old User'] };
++    let saved: DashboardSidebarConfig | undefined;
++    el.onSave = (c) => {
++      saved = c;
++    };
++    await settle(el);
++    await new Promise((r) => setTimeout(r, 0));
++    await settle(el);
++
++    const boxes = (): HTMLLabelElement[] =>
++      [...root(el).querySelectorAll('.settings label.field-inline')].filter((l) =>
++        ['Stefan', 'Gast', 'Old User', 'Supervisor'].includes(
++          l.querySelector('.check-label > span')?.textContent?.trim() ?? '',
++        ),
++      ) as HTMLLabelElement[];
++    const box = (name: string): HTMLInputElement =>
++      boxes()
++        .find((l) => l.querySelector('.check-label > span')?.textContent?.trim() === name)!
++        .querySelector('input') as HTMLInputElement;
++
++    // System users are hidden; a name entry matches its user; an unknown entry is listed.
++    expect(boxes().map((l) => l.querySelector('.check-label > span')?.textContent?.trim())).to.eql([
++      'Gast',
++      'Stefan',
++      'Old User',
++    ]);
++    expect(box('Gast').checked).to.equal(true);
++    expect(box('Stefan').checked).to.equal(false);
++
++    box('Stefan').click();
++    await settle(el);
++    box('Old User').click();
++    await settle(el);
++    (root(el).querySelector('footer .primary') as HTMLButtonElement).click();
++    expect(saved?.users).to.eql(['gast', 'u-stefan']);
++
++    box('Gast').click();
++    await settle(el);
++    box('Stefan').click();
++    await settle(el);
++    (root(el).querySelector('footer .primary') as HTMLButtonElement).click();
++    expect(saved?.users).to.equal(undefined);
++    expect(JSON.parse(JSON.stringify(saved))).not.to.have.property('users');
++  });
++
+   it('surfaces errors and does not save an invalid config', async () => {
+     const el = await mount({} as DashboardSidebarConfig);
+     let saved = false;
+diff --git a/src/editor/sidebar-editor.ts b/src/editor/sidebar-editor.ts
+index 438e20e..6927244 100644
+--- a/src/editor/sidebar-editor.ts
++++ b/src/editor/sidebar-editor.ts
+@@ -242,6 +242,12 @@ export class DashboardSidebarEditor extends LitElement {
+   /** Per-field validation errors, keyed by field name within the current form. */
+   @state() private _fieldErrors: Record<string, string> = {};
+ 
++  /**
++   * The instance's real (non-system) users for the Visible To picker, or null
++   * until loaded / when the list is unavailable (non-admin or older HA).
++   */
++  @state() private _users: { id: string; name: string }[] | null = null;
++
+   /** Whether the unsaved-changes exit confirmation is showing. */
+   @state() private _confirmingClose = false;
+ 
+@@ -454,6 +460,105 @@ export class DashboardSidebarEditor extends LitElement {
+       void customElements.whenDefined('ha-yaml-editor').then(() => this.requestUpdate());
+     }
+     this._loadServiceTranslations();
++    this._loadUsers();
++  }
++
++  /**
++   * Loads the user list for the Visible To picker. `config/auth/list` is
++   * admin-only, which matches who can edit a dashboard; system users (the
++   * Supervisor, integrations) are left out since nobody signs in as them.
++   */
++  private _loadUsers(): void {
++    const callWS = (this.hass as unknown as { callWS?: (msg: object) => Promise<unknown> })?.callWS;
++    if (typeof callWS !== 'function') {
++      return;
++    }
++    void Promise.resolve(callWS.call(this.hass, { type: 'config/auth/list' }))
++      .then((list) => {
++        if (!Array.isArray(list)) {
++          return;
++        }
++        this._users = (list as { id?: string; name?: string; system_generated?: boolean }[])
++          .filter((u) => u && typeof u.id === 'string' && !u.system_generated)
++          .map((u) => ({ id: u.id as string, name: u.name || (u.id as string) }))
++          .sort((a, b) => a.name.localeCompare(b.name));
++      })
++      .catch(() => {
++        // No user list (not an admin): the restriction stays editable as YAML.
++      });
++  }
++
++  /**
++   * Whether a configured `users` entry refers to the given user, by id or
++   * display name, matching the runtime check.
++   */
++  private static _entryMatches(entry: string, user: { id: string; name: string }): boolean {
++    const e = entry.trim().toLowerCase();
++    return e === user.id.toLowerCase() || e === user.name.trim().toLowerCase();
++  }
++
++  /**
++   * Toggles one user in the `users` list. Ticking stores the stable user id;
++   * unticking drops every entry naming that user (id or name). An empty list
++   * removes the key, which shows the sidebar to everyone again.
++   */
++  private _toggleUser(user: { id: string; name: string }, on: boolean): void {
++    const current = (this._working.users ?? []).filter(
++      (entry) => !DashboardSidebarEditor._entryMatches(entry, user),
++    );
++    if (on) {
++      current.push(user.id);
++    }
++    this._patchConfig({ users: current.length ? current : undefined });
++  }
++
++  /**
++   * Renders the Visible To picker: one checkbox per user. Entries that match
++   * no known user (a typo, or a deleted user) are listed so they can be
++   * removed rather than silently kept.
++   */
++  private _renderUsersField(): TemplateResult {
++    const configured = this._working.users ?? [];
++    const users = this._users;
++    if (!users) {
++      return html`<div class="field">
++        <span>Visible To</span>
++        <small class="field-desc">
++          ${configured.length ? `Restricted to: ${configured.join(', ')}.` : 'All users.'} The user
++          list could not be loaded; edit the users key in YAML.
++        </small>
++      </div>`;
++    }
++    const unknown = configured.filter(
++      (entry) => !users.some((u) => DashboardSidebarEditor._entryMatches(entry, u)),
++    );
++    return html`<div class="field">
++      <span>Visible To</span>
++      <small class="field-desc">
++        Tick the users who see this sidebar. Leave all unticked to show it to everyone. While
++        editing the dashboard it is always shown.
++      </small>
++      ${users.map((u) =>
++        checkboxField(
++          u.name,
++          configured.some((entry) => DashboardSidebarEditor._entryMatches(entry, u)),
++          (v) => this._toggleUser(u, v),
++        ),
++      )}
++      ${unknown.map((entry) =>
++        checkboxField(
++          entry,
++          true,
++          () =>
++            this._patchConfig({
++              users: configured.filter((e) => e !== entry).length
++                ? configured.filter((e) => e !== entry)
++                : undefined,
++            }),
++          'No user with this id or name exists. Untick to remove it.',
++        ),
++      )}
++    </div>`;
+   }
+ 
+   /**
+@@ -1553,6 +1658,7 @@ export class DashboardSidebarEditor extends LitElement {
+                     (v) => this._patchConfig({ overlay: v || undefined }),
+                     'Float the sidebar over the dashboard instead of pushing the content aside.',
+                   )}
++                  ${this._renderUsersField()}
+                   <details class="advanced">
+                     <summary>Advanced</summary>
+                     ${intField(
+diff --git a/src/lib/bootstrap.ts b/src/lib/bootstrap.ts
+index 3e1ae4e..449eeab 100644
+--- a/src/lib/bootstrap.ts
++++ b/src/lib/bootstrap.ts
+@@ -6,6 +6,7 @@ import {
+   TOGGLE_EVENT,
+ } from './const';
+ import { desktopMode, mobileMode } from './mobile';
++import { isVisibleForUser } from './users';
+ import type { DashboardSidebarConfig } from './types';
+ import type { DashboardSidebar } from '../dashboard-sidebar';
+ import type { DashboardSidebarBar } from '../dashboard-sidebar-bar';
+@@ -149,6 +150,23 @@ const readConfig = (huiRoot: { lovelace?: any }): DashboardSidebarConfig | null
+   return config ?? null;
+ };
+ 
++/**
++ * Reads the config only when the sidebar should render for the signed-in
++ * user, or null when it is absent or restricted to other users. Edit mode
++ * always shows it, so an admin who is not on the list can still open the
++ * editor (only admins can enter edit mode).
++ */
++const readVisibleConfig = (huiRoot: { lovelace?: any }): DashboardSidebarConfig | null => {
++  const config = readConfig(huiRoot);
++  if (!config) {
++    return null;
++  }
++  if (isEditMode(huiRoot) || isVisibleForUser(config, getHass()?.user)) {
++    return config;
++  }
++  return null;
++};
++
+ /**
+  * Writes an edited config back to the Lovelace config.
+  */
+@@ -287,7 +305,7 @@ const buildSidebar = (): void => {
+   if (!huiRoot) {
+     return;
+   }
+-  const config = readConfig(huiRoot);
++  const config = readVisibleConfig(huiRoot);
+   const shadow = huiRoot.shadowRoot;
+ 
+   if (!config) {
+@@ -425,7 +443,9 @@ const ensureSidebar = (): void => {
+     }
+     const shadow = huiRoot.shadowRoot;
+     const editMode = isEditMode(huiRoot);
+-    const config = readConfig(huiRoot);
++    // A sidebar restricted to other users reads as no sidebar here, so the
++    // reconcile below tears it down (and never shows the add button for it).
++    const config = readVisibleConfig(huiRoot);
+     const wrapper = shadow.getElementById(WRAPPER_ID);
+ 
+     if (!wrapper) {
+diff --git a/src/lib/schema.generated.ts b/src/lib/schema.generated.ts
+index 1c2c3b9..8c5f2a3 100644
+--- a/src/lib/schema.generated.ts
++++ b/src/lib/schema.generated.ts
+@@ -3,7 +3,7 @@
+ // The schema-check CI step fails if this file is stale.
+ 
+ /** Fields accepted on the top-level `dashboard_sidebar` config. */
+-export const TOP_FIELDS = ['position', 'width', 'start_collapsed', 'overlay', 'on_desktop', 'on_mobile', 'breakpoint', 'background', 'header', 'body', 'footer', 'mobile', 'card_mod'] as const;
++export const TOP_FIELDS = ['position', 'width', 'start_collapsed', 'overlay', 'on_desktop', 'on_mobile', 'breakpoint', 'users', 'background', 'header', 'body', 'footer', 'mobile', 'card_mod'] as const;
+ 
+ /** Fields shared by every block and footer button. */
+ export const COMMON_FIELDS = ['class', 'id', 'card_mod'] as const;
+diff --git a/src/lib/types.ts b/src/lib/types.ts
+index 98c7dd6..b6ea0c4 100644
+--- a/src/lib/types.ts
++++ b/src/lib/types.ts
+@@ -347,6 +347,13 @@ export interface DashboardSidebarConfig {
+    * on_mobile, on_desktop). Default 768.
+    */
+   breakpoint?: number;
++  /**
++   * Home Assistant users the sidebar is shown to, by user id or display name
++   * (case-insensitive). Omit to show it to everyone. Users not listed see the
++   * dashboard without the sidebar, except while editing the dashboard, so an
++   * admin can always reach the editor. A display filter, not access control.
++   */
++  users?: string[];
+   /**
+    * Sidebar background: any CSS `background` value (color, gradient, image, …),
+    * applied as the `background` shorthand. Defaults to the theme card background.
+diff --git a/src/lib/users.test.ts b/src/lib/users.test.ts
+new file mode 100644
+index 0000000..94b4db0
+--- /dev/null
++++ b/src/lib/users.test.ts
+@@ -0,0 +1,40 @@
++import { describe, expect, it } from 'vitest';
++
++import type { DashboardSidebarConfig } from './types';
++import { hasUserRestriction, isVisibleForUser } from './users';
++
++const base: DashboardSidebarConfig = { body: [{ type: 'divider' }] };
++const stefan = { id: 'a1b2c3', name: 'Stefan' };
++const guest = { id: 'ffff00', name: 'Gast' };
++
++describe('isVisibleForUser', () => {
++  it('shows the sidebar to everyone without a users key', () => {
++    expect(hasUserRestriction(base)).toBe(false);
++    expect(isVisibleForUser(base, guest)).toBe(true);
++    expect(isVisibleForUser(base, undefined)).toBe(true);
++  });
++
++  it('matches a listed user id', () => {
++    const config = { ...base, users: ['a1b2c3'] };
++    expect(isVisibleForUser(config, stefan)).toBe(true);
++    expect(isVisibleForUser(config, guest)).toBe(false);
++  });
++
++  it('matches a display name case-insensitively and trimmed', () => {
++    const config = { ...base, users: ['  stefan '] };
++    expect(isVisibleForUser(config, stefan)).toBe(true);
++    expect(isVisibleForUser(config, guest)).toBe(false);
++  });
++
++  it('stays hidden while the user is still unknown', () => {
++    const config = { ...base, users: ['Stefan'] };
++    expect(isVisibleForUser(config, undefined)).toBe(false);
++    expect(isVisibleForUser(config, {})).toBe(false);
++  });
++
++  it('ignores empty and non-string entries', () => {
++    const config = { ...base, users: ['', 42 as unknown as string] };
++    expect(isVisibleForUser(config, { id: '', name: '' })).toBe(false);
++    expect(isVisibleForUser(config, guest)).toBe(false);
++  });
++});
+diff --git a/src/lib/users.ts b/src/lib/users.ts
+new file mode 100644
+index 0000000..0f9350d
+--- /dev/null
++++ b/src/lib/users.ts
+@@ -0,0 +1,63 @@
++/**
++ * Per-user visibility.
++ *
++ * Decides whether the sidebar renders for the Home Assistant user who is
++ * signed in to this browser. Pure logic, no rendering.
++ *
++ * This is a presentation filter, not access control: the config is still
++ * part of the dashboard every user downloads.
++ */
++
++import type { DashboardSidebarConfig } from './types';
++
++/** The parts of `hass.user` this module reads. */
++export interface SidebarUser {
++  /** Home Assistant user id (stable, what the editor stores). */
++  id?: string;
++  /** Display name of the user. */
++  name?: string;
++}
++
++/** Normalizes a configured entry or a user attribute for comparison. */
++const norm = (value: unknown): string => {
++  return typeof value === 'string' ? value.trim().toLowerCase() : '';
++};
++
++/**
++ * Whether the config restricts the sidebar to a list of users at all. An
++ * absent key means everyone sees it.
++ */
++export const hasUserRestriction = (config: DashboardSidebarConfig): boolean => {
++  return Array.isArray(config.users);
++};
++
++/**
++ * Whether the sidebar is visible for the given user.
++ *
++ * An entry matches either the user's id or the user's display name
++ * (case-insensitive), so YAML can use readable names while the editor stores
++ * stable ids. When `users` is set but the user is not known yet (the
++ * frontend is still loading), the sidebar stays hidden; the bootstrap
++ * re-checks on its next tick.
++ *
++ * @param config - The sidebar config.
++ * @param user - `hass.user`, or undefined while it is loading.
++ * @returns True when the sidebar should render for this user.
++ */
++export const isVisibleForUser = (
++  config: DashboardSidebarConfig,
++  user: SidebarUser | undefined | null,
++): boolean => {
++  if (!hasUserRestriction(config)) {
++    return true;
++  }
++  const id = norm(user?.id);
++  const name = norm(user?.name);
++  if (!id && !name) {
++    return false;
++  }
++  return (config.users ?? []).some((entry) => {
++    const e = norm(entry);
++    return e !== '' && (e === id || e === name);
++  });
++};
+diff --git a/src/lib/validate.test.ts b/src/lib/validate.test.ts
+index 1ea4f57..8ed583e 100644
+--- a/src/lib/validate.test.ts
++++ b/src/lib/validate.test.ts
+@@ -21,6 +21,22 @@ describe('validateConfig', () => {
+     );
+   });
+ 
++  it('accepts a users list of ids or names', () => {
++    expect(validateConfig({ ...valid(), users: ['a1b2c3', 'Stefan'] })).toHaveLength(0);
++  });
++
++  it('rejects malformed users', () => {
++    expect(validateConfig({ ...valid(), users: 'Stefan' as unknown as string[] })).toContain(
++      'users: must be a list of user ids or names',
++    );
++    expect(validateConfig({ ...valid(), users: [] })).toContain(
++      'users: an empty list hides the sidebar from everyone; remove the key instead',
++    );
++    expect(validateConfig({ ...valid(), users: ['ok', ' '] })).toContain(
++      'users[1]: must be a non-empty user id or name',
++    );
++  });
++
+   it('rejects a non-mapping config', () => {
+     expect(validateConfig(null as unknown as DashboardSidebarConfig)).toEqual([
+       'dashboard_sidebar: config must be a mapping',
+diff --git a/src/lib/validate.ts b/src/lib/validate.ts
+index 3cdb160..37a9769 100644
+--- a/src/lib/validate.ts
++++ b/src/lib/validate.ts
+@@ -461,6 +461,19 @@ export const validateConfig = (config: DashboardSidebarConfig): string[] => {
+   ) {
+     errors.push('breakpoint: must be a positive number of pixels');
+   }
++  if (config.users !== undefined) {
++    if (!Array.isArray(config.users)) {
++      errors.push('users: must be a list of user ids or names');
++    } else if (config.users.length === 0) {
++      errors.push('users: an empty list hides the sidebar from everyone; remove the key instead');
++    } else {
++      config.users.forEach((u, i) => {
++        if (typeof u !== 'string' || u.trim() === '') {
++          errors.push(`users[${i}]: must be a non-empty user id or name`);
++        }
++      });
++    }
++  }
+   if (c.hide_on_mobile !== undefined) {
+     errors.push('hide_on_mobile: replaced by `on_mobile: hidden`');
+   }
